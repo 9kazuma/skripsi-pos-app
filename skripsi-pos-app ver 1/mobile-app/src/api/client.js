@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 export const api = axios.create({
-  baseURL: process.env.EXPO_PUBLIC_API_URL,
+  baseURL: 'https://skripsi-pos-app-production.up.railway.app/api',
   timeout: 10000,
 });
 
