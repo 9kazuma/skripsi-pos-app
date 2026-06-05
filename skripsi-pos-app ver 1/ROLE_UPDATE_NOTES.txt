@@ -1,0 +1,15 @@
+Role update implemented:
+
+Roles:
+- owner: can access everything, including Reports and Sales Target.
+- manager: can access Dashboard, Products, Users, Restock, Adjustment, Profile. Reports are hidden and blocked by backend.
+- cashier: can access POS, Sales History, Profile.
+
+User management rules:
+- owner can create/edit/delete owner, manager, and cashier users.
+- manager can create/edit/delete manager and cashier users.
+- manager cannot create owner accounts.
+- manager cannot edit/delete owner accounts or change any user role to owner.
+
+Important migration:
+Run docs/role_migration_owner_manager_cashier.sql in phpMyAdmin before testing if your database still has old admin/cashier enum roles.

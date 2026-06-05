@@ -1,0 +1,21 @@
+Location/cabang stock update
+============================
+
+New behavior:
+- Stock is now stored per location/cabang.
+- Product page has a Location/Cabang selector.
+- Same product can show different stock in Alam Sutera and Kemang.
+- Restock and Stock Adjustment now update stock for the selected location only.
+- Dashboard stock distribution and stock alerts follow the selected location.
+- POS also has a location selector and reduces stock from that selected location.
+
+Important SQL migration:
+Before testing, run this in phpMyAdmin:
+
+docs/location_stock_migration.sql
+
+Default locations added:
+- Alam Sutera
+- Kemang
+
+If you want to rename/add locations, edit table `locations` in phpMyAdmin.

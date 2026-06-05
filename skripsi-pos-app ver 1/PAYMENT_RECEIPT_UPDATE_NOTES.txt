@@ -1,0 +1,19 @@
+PAYMENT / RECEIPT UPDATE NOTES
+
+Run this migration in phpMyAdmin after the existing role/location migrations:
+  docs/payment_receipt_migration.sql
+
+Then install the new mobile dependency:
+  cd mobile-app
+  npx expo install expo-image-picker
+
+Added features:
+- POS shows popup stock warnings for selected location/cabang when product stock is low or empty.
+- Dashboard shows popup stock warnings for selected location/cabang.
+- POS supports payment methods:
+  * Cash
+  * Transfer Manual with optional payment proof image upload
+  * QRIS Otomatis with simulated payment gateway confirmation/reference
+- Checkout shows a receipt modal.
+- Sales history detail shows payment status, QRIS reference, manual proof name, and proof image preview.
+- Location/cabang stock feature is preserved.

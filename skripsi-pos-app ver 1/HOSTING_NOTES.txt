@@ -1,0 +1,19 @@
+HOSTING CHANGES APPLIED
+
+1. mobile-app/.env has been changed to:
+   EXPO_PUBLIC_API_URL=https://YOUR-BACKEND-URL/api
+
+   After you deploy the backend, replace YOUR-BACKEND-URL with your real Railway/Render backend URL.
+   Example:
+   EXPO_PUBLIC_API_URL=https://umkm-pos-backend.up.railway.app/api
+
+2. backend/src/server.js log has been changed from localhost wording to:
+   Server running on port ${PORT}
+
+3. Backend is already using environment variables for database:
+   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, JWT_SECRET, PORT
+
+4. Import docs/database.sql into your hosted MySQL database first.
+
+5. After changing mobile-app/.env to the real API URL, restart Expo with:
+   npx expo start -c
