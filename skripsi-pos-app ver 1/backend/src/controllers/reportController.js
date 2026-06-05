@@ -329,12 +329,12 @@ exports.dashboard = async (req, res) => {
 
     const [salesTrendRaw] = await db.execute(
       `SELECT DATE_FORMAT(created_at, ?) AS label,
-              COALESCE(SUM(total_amount), 0) AS total
-       FROM sales
-       WHERE ${intervalCondition}
-       GROUP BY DATE_FORMAT(created_at, ?)
-       ORDER BY MIN(created_at) ASC`,
-      [labelFormat, labelFormat]
+            COALESCE(SUM(total_amount), 0) AS total
+      FROM sales
+      WHERE ${intervalCondition}
+      GROUP BY label
+      ORDER BY MIN(created_at) ASC`,
+      [labelFormat]
     );
 
     const [[dailyProfit]] = await db.execute(
