@@ -336,7 +336,7 @@ export default function POSScreen() {
             <View style={styles.qrisBox}>
               <Text style={styles.label}>QRIS Otomatis</Text>
               <Text style={styles.helperText}>
-                Pembayaran QRIS akan dikonfirmasi otomatis oleh payment gateway saat transaksi diselesaikan.
+                Pembayaran QRIS dikonfirmasi otomatis oleh sistem sebagai simulasi pembayaran.
               </Text>
               <Text style={styles.helperText}>
                 Nominal QRIS: {formatCurrency(total)}
@@ -641,4 +641,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 4,
   },
-});
+});""

@@ -11,6 +11,8 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import ScreenContainer from '../../components/ScreenContainer';
 import { api } from '../../api/client';
 
@@ -45,6 +47,13 @@ function escapeCsv(value) {
     return `"${text.replace(/"/g, '""')}"`;
   }
   return text;
+}
+
+function makeSafeFileName(value) {
+  return String(value || 'file')
+    .replace(/[^\w.-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
 }
 
 export default function ReportsScreen() {
@@ -122,7 +131,7 @@ export default function ReportsScreen() {
     );
   }, [cashierSummary]);
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
     if (!report) {
       Alert.alert('Info', 'Tampilkan laporan dulu sebelum export CSV');
       return;
@@ -182,25 +191,54 @@ export default function ReportsScreen() {
       );
     });
 
-    const csvContent = lines.join('\n');
-    const safeCashierName = selectedCashierId ? cashierLabel.replace(/\s+/g, '-') : 'semua-kasir';
+    const csvContent = '\uFEFF' + lines.join('\n');
+    const safeCashierName = selectedCashierId
+      ? makeSafeFileName(cashierLabel)
+      : 'semua-kasir';
     const fileName = `laporan-${startDate}-${endDate}-${safeCashierName}.csv`;
 
     if (Platform.OS === 'web') {
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
+
       link.href = url;
       link.setAttribute('download', fileName);
+
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+
       window.URL.revokeObjectURL(url);
       Alert.alert('Berhasil', 'CSV berhasil diunduh');
       return;
     }
 
-    Alert.alert('Info', 'Download CSV otomatis saat ini tersedia di web');
+    try {
+      const fileUri = `${FileSystem.cacheDirectory}${fileName}`;
+
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+
+      const available = await Sharing.isAvailableAsync();
+
+      if (!available) {
+        Alert.alert('Info', 'Fitur sharing tidak tersedia di perangkat ini');
+        return;
+      }
+
+      await Sharing.shareAsync(fileUri, {
+        mimeType: 'text/csv',
+        dialogTitle: 'Bagikan CSV Laporan',
+        UTI: 'public.comma-separated-values-text',
+      });
+    } catch (error) {
+      Alert.alert(
+        'Gagal',
+        error?.message || 'Tidak bisa membuat file CSV di mobile'
+      );
+    }
   };
 
   return (
@@ -216,6 +254,7 @@ export default function ReportsScreen() {
             value={startDate}
             onChangeText={setStartDate}
             placeholder="YYYY-MM-DD"
+            placeholderTextColor="#6b7280"
           />
 
           <TextInput
@@ -223,6 +262,7 @@ export default function ReportsScreen() {
             value={endDate}
             onChangeText={setEndDate}
             placeholder="YYYY-MM-DD"
+            placeholderTextColor="#6b7280"
           />
 
           <TouchableOpacity
@@ -429,6 +469,8 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     borderRadius: 10,
     padding: 12,
+    color: '#111827',
+    backgroundColor: '#ffffff',
   },
   selectorButton: {
     borderWidth: 1,

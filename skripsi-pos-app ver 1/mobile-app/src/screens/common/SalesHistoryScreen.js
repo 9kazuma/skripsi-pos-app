@@ -15,7 +15,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import ScreenContainer from '../../components/ScreenContainer';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
-import { exportReceiptPdf } from '../../utils/receiptPdf';
+import { exportReceiptPdf, printReceiptPdf } from '../../utils/receiptPdf';
 
 function formatCurrency(value) {
   return `Rp ${Number(value || 0).toLocaleString('id-ID')}`;
@@ -27,11 +27,13 @@ function formatDateTime(value) {
   const date = new Date(value);
 
   const tanggal = date.toLocaleDateString('id-ID');
-  const jam = date.toLocaleTimeString('id-ID', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).replace(/\./g, ':');
+  const jam = date
+    .toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+    .replace(/\./g, ':');
 
   return `${tanggal}, ${jam}`;
 }
@@ -93,161 +95,20 @@ export default function SalesHistoryScreen() {
     setSelectedDate('');
   };
 
-  const exportPdfReceipt = () => {
-    const result = exportReceiptPdf(selectedDetail);
+  const exportPdfReceipt = async () => {
+    const result = await exportReceiptPdf(selectedDetail);
 
     if (!result?.ok) {
       Alert.alert('Info', result?.message || 'Tidak bisa export PDF');
     }
   };
 
-  const printReceipt = () => {
-    if (!selectedDetail?.sale) {
-      Alert.alert('Info', 'Detail transaksi belum tersedia');
-      return;
+  const printReceipt = async () => {
+    const result = await printReceiptPdf(selectedDetail);
+
+    if (!result?.ok) {
+      Alert.alert('Info', result?.message || 'Tidak bisa print struk');
     }
-
-    if (Platform.OS !== 'web') {
-      Alert.alert('Info', 'Print struk saat ini tersedia di web');
-      return;
-    }
-
-    const sale = selectedDetail.sale;
-    const items = selectedDetail.items || [];
-
-    const itemsHtml = items
-      .map(
-        (item) => `
-          <div class="item-block">
-            <div class="item-name">${item.base_name || item.name}${item.variant_name ? ` - ${item.variant_name}` : ''}</div>
-            <div class="item-row">
-              <span>${item.quantity} x ${formatCurrency(item.price)}</span>
-              <span>${formatCurrency(item.total)}</span>
-            </div>
-          </div>
-        `
-      )
-      .join('');
-
-    const html = `
-      <html>
-        <head>
-          <title></title>
-          <style>
-            @page {
-              size: 58mm auto;
-              margin: 3mm;
-            }
-
-            html, body {
-              margin: 0;
-              padding: 0;
-              width: 52mm;
-              font-family: Arial, sans-serif;
-              font-size: 10px;
-              color: #000;
-              background: #fff;
-            }
-
-            .receipt {
-              width: 100%;
-              padding: 0;
-              margin: 0 auto;
-            }
-
-            .center {
-              text-align: center;
-            }
-
-            .title {
-              font-size: 14px;
-              font-weight: 700;
-              margin-bottom: 6px;
-            }
-
-            .line {
-              border-top: 1px dashed #000;
-              margin: 6px 0;
-            }
-
-            .meta {
-              margin: 2px 0;
-            }
-
-            .header-row,
-            .totals-row,
-            .item-row {
-              display: flex;
-              justify-content: space-between;
-              gap: 8px;
-            }
-
-            .header-row {
-              font-weight: 700;
-              margin-bottom: 4px;
-            }
-
-            .item-block {
-              margin-bottom: 6px;
-            }
-
-            .item-name {
-              margin-bottom: 2px;
-              word-break: break-word;
-            }
-
-            .totals-row {
-              margin: 3px 0;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="receipt">
-            <div class="center title">UMKM POS</div>
-
-            <div class="meta">Transaksi #${sale.id}</div>
-            <div class="meta">Kasir: ${sale.cashier_name || '-'}</div>
-            <div class="meta">Lokasi: ${sale.location_name || '-'}</div>
-            <div class="meta">Waktu: ${formatDateTime(sale.created_at)}</div>
-            <div class="meta">Bayar: ${sale.payment_method || '-'}</div>
-            <div class="meta">Status: ${sale.payment_status || 'confirmed'}</div>
-            ${sale.qris_reference ? `<div class="meta">Ref QRIS: ${sale.qris_reference}</div>` : ''}
-            ${sale.payment_proof_name ? `<div class="meta">Bukti: ${sale.payment_proof_name}</div>` : ''}
-
-            <div class="line"></div>
-
-            <div class="header-row">
-              <span>Item</span>
-              <span>Subtotal</span>
-            </div>
-
-            ${itemsHtml}
-
-            <div class="line"></div>
-
-            <div class="totals-row"><span>Total</span><span>${formatCurrency(sale.total_amount)}</span></div>
-            <div class="totals-row"><span>Bayar</span><span>${formatCurrency(sale.payment_amount)}</span></div>
-            <div class="totals-row"><span>Kembali</span><span>${formatCurrency(sale.change_amount)}</span></div>
-          </div>
-        </body>
-      </html>
-    `;
-
-    const printWindow = window.open('', '_blank', 'width=420,height=700');
-    if (!printWindow) {
-      Alert.alert('Gagal', 'Popup print diblokir browser');
-      return;
-    }
-
-    printWindow.document.open();
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.document.title = '';
-
-    setTimeout(() => {
-      printWindow.focus();
-      printWindow.print();
-    }, 300);
   };
 
   return (
@@ -291,10 +152,7 @@ export default function SalesHistoryScreen() {
               <Text style={styles.secondaryButtonText}>Hari Ini</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={resetFilter}
-            >
+            <TouchableOpacity style={styles.secondaryButton} onPress={resetFilter}>
               <Text style={styles.secondaryButtonText}>Reset</Text>
             </TouchableOpacity>
 
@@ -353,12 +211,15 @@ export default function SalesHistoryScreen() {
                 <Text>Waktu: {formatDateTime(selectedDetail?.sale?.created_at)}</Text>
                 <Text>Metode bayar: {selectedDetail?.sale?.payment_method || '-'}</Text>
                 <Text>Status bayar: {selectedDetail?.sale?.payment_status || 'confirmed'}</Text>
+
                 {selectedDetail?.sale?.qris_reference ? (
                   <Text>Ref QRIS: {selectedDetail.sale.qris_reference}</Text>
                 ) : null}
+
                 {selectedDetail?.sale?.payment_proof_name ? (
                   <Text>Bukti manual: {selectedDetail.sale.payment_proof_name}</Text>
                 ) : null}
+
                 <Text>Total: {formatCurrency(selectedDetail?.sale?.total_amount)}</Text>
                 <Text>Pembayaran: {formatCurrency(selectedDetail?.sale?.payment_amount)}</Text>
                 <Text>Kembalian: {formatCurrency(selectedDetail?.sale?.change_amount)}</Text>
