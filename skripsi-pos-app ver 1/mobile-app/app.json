@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#ffffff",
+    "extra": {
+      "eas": {
+        "projectId": "536dff26-cab0-47ce-85b5-56715ce0507a"
+      }
+    },
+    "android": {
+      "package": "com.kazuma.umkmpos",
+      "userInterfaceStyle": "light",
+      "backgroundColor": "#ffffff"
+    }
+  }
+}
