@@ -158,8 +158,9 @@ export default function POSScreen() {
   }, [selectedProduct, quantity]);
 
   const changeAmount = useMemo(() => {
+    if (paymentMethod !== 'cash') return 0;
     return Number(paymentAmount || 0) - total;
-  }, [paymentAmount, total]);
+  }, [paymentAmount, total, paymentMethod]);
 
   const selectedPaymentMethodLabel =
     PAYMENT_METHOD_OPTIONS.find((item) => item.value === paymentMethod)?.label || 'Cash';
@@ -207,14 +208,14 @@ export default function POSScreen() {
       return;
     }
 
-    if (Number(paymentAmount) < total) {
+    if (paymentMethod === 'cash' && Number(paymentAmount) < total) {
       Alert.alert('Validasi', 'Nominal pembayaran kurang');
       return;
     }
 
     try {
       const response = await api.post('/sales', {
-        payment_amount: Number(paymentAmount),
+        payment_amount: paymentMethod === 'cash' ? Number(paymentAmount) : total,
         payment_method: paymentMethod,
         payment_proof_name: paymentProof?.name || null,
         payment_proof_data: paymentProof?.data || null,
@@ -299,6 +300,7 @@ export default function POSScreen() {
             onChangeText={setQuantity}
             keyboardType="numeric"
             placeholder="Qty"
+            placeholderTextColor="#6b7280"
           />
 
           <Text style={styles.label}>Metode Bayar</Text>
@@ -315,6 +317,9 @@ export default function POSScreen() {
               <Text style={styles.label}>Bukti Pembayaran Manual</Text>
               <Text style={styles.helperText}>
                 Upload foto bukti pembayaran bersifat opsional.
+              </Text>
+              <Text style={styles.helperText}>
+                Nominal transfer: {formatCurrency(total)}
               </Text>
               <TouchableOpacity style={styles.secondaryButton} onPress={pickPaymentProof}>
                 <Text style={styles.secondaryButtonText}>
@@ -333,22 +338,31 @@ export default function POSScreen() {
               <Text style={styles.helperText}>
                 Pembayaran QRIS akan dikonfirmasi otomatis oleh payment gateway saat transaksi diselesaikan.
               </Text>
+              <Text style={styles.helperText}>
+                Nominal QRIS: {formatCurrency(total)}
+              </Text>
             </View>
           )}
 
-          <TextInput
-            style={styles.input}
-            value={paymentAmount}
-            onChangeText={setPaymentAmount}
-            keyboardType="numeric"
-            placeholder="Nominal pembayaran"
-          />
+          {paymentMethod === 'cash' && (
+            <>
+              <TextInput
+                style={styles.input}
+                value={paymentAmount}
+                onChangeText={setPaymentAmount}
+                keyboardType="numeric"
+                placeholder="Nominal pembayaran"
+                placeholderTextColor="#6b7280"
+              />
+
+              <Text>
+                Kembalian:{' '}
+                {changeAmount >= 0 ? formatCurrency(changeAmount) : formatCurrency(0)}
+              </Text>
+            </>
+          )}
 
           <Text>Total: {formatCurrency(total)}</Text>
-          <Text>
-            Kembalian:{' '}
-            {changeAmount >= 0 ? formatCurrency(changeAmount) : formatCurrency(0)}
-          </Text>
 
           <Button title="Selesaikan Transaksi" onPress={checkout} />
         </View>
@@ -382,6 +396,9 @@ export default function POSScreen() {
                   onPress={() => {
                     setPaymentMethod(item.value);
                     setPaymentMethodVisible(false);
+                    if (item.value !== 'cash') {
+                      setPaymentAmount('');
+                    }
                     if (item.value !== 'manual_transfer') {
                       setPaymentProof(null);
                     }
@@ -416,7 +433,9 @@ export default function POSScreen() {
 
             <ScrollView showsVerticalScrollIndicator={false}>
               <Text style={styles.receiptText}>Transaksi #{lastSale?.sale_id}</Text>
-              <Text style={styles.receiptText}>Lokasi: {lastSale?.location_name || selectedLocation?.name || '-'}</Text>
+              <Text style={styles.receiptText}>
+                Lokasi: {lastSale?.location_name || selectedLocation?.name || '-'}
+              </Text>
               <Text style={styles.receiptText}>Metode: {lastSale?.payment_method}</Text>
               <Text style={styles.receiptText}>Status: {lastSale?.payment_status}</Text>
               {lastSale?.qris_reference ? (
@@ -439,8 +458,12 @@ export default function POSScreen() {
 
               <View style={styles.receiptDivider} />
               <Text style={styles.receiptTotal}>Total: {formatCurrency(lastSale?.total_amount)}</Text>
-              <Text style={styles.receiptText}>Bayar: {formatCurrency(lastSale?.payment_amount)}</Text>
-              <Text style={styles.receiptText}>Kembali: {formatCurrency(lastSale?.change_amount)}</Text>
+              <Text style={styles.receiptText}>
+                Bayar: {formatCurrency(lastSale?.payment_amount)}
+              </Text>
+              <Text style={styles.receiptText}>
+                Kembali: {formatCurrency(lastSale?.change_amount)}
+              </Text>
 
               <TouchableOpacity
                 style={styles.closeModalButton}
@@ -516,6 +539,8 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     borderRadius: 10,
     padding: 12,
+    color: '#111827',
+    backgroundColor: '#ffffff',
   },
   paymentProofBox: {
     padding: 12,
