@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
-  Button,
   Modal,
   ScrollView,
   StyleSheet,
@@ -16,460 +15,1130 @@ import ScreenContainer from '../../components/ScreenContainer';
 import ProductPickerModal from '../../components/ProductPickerModal';
 import { api } from '../../api/client';
 
-function formatCurrency(value) {
-  return `Rp ${Number(value || 0).toLocaleString('id-ID')}`;
-}
-
-function formatProductName(product) {
-  if (!product) return '-';
-  return `${product.base_name || product.name || 'Produk'}${
-    product.variant_name ? ` - ${product.variant_name}` : ''
-  }`;
-}
-
-function buildStockAlert(products, locationName) {
-  const activeProducts = products || [];
-  const noStock = activeProducts.filter((item) => Number(item.stock || 0) <= 0);
-  const lowStock = activeProducts.filter(
-    (item) =>
-      Number(item.stock || 0) > 0 &&
-      Number(item.stock || 0) <= Number(item.minimum_stock || 0)
-  );
-
-  if (!noStock.length && !lowStock.length) return null;
-
-  const lines = [`Lokasi: ${locationName || 'Lokasi terpilih'}`];
-
-  if (noStock.length) {
-    lines.push('');
-    lines.push(`Stok habis (${noStock.length}):`);
-    lines.push(
-      ...noStock.slice(0, 5).map((item) => `• ${formatProductName(item)} (${item.stock})`)
-    );
-  }
-
-  if (lowStock.length) {
-    lines.push('');
-    lines.push(`Stok menipis (${lowStock.length}):`);
-    lines.push(
-      ...lowStock
-        .slice(0, 5)
-        .map(
-          (item) =>
-            `• ${formatProductName(item)} (${item.stock}/${item.minimum_stock})`
-        )
-    );
-  }
-
-  if (noStock.length + lowStock.length > 5) {
-    lines.push('');
-    lines.push('Cek halaman produk/restock untuk detail lengkap.');
-  }
-
-  return lines.join('\n');
-}
-
-const PAYMENT_METHOD_OPTIONS = [
+const PAYMENT_METHODS = [
   { label: 'Cash', value: 'cash' },
   { label: 'Transfer Manual', value: 'manual_transfer' },
-  { label: 'QRIS Otomatis', value: 'qris' },
+  { label: 'QRIS Simulasi', value: 'qris' },
 ];
 
+const money = (value) =>
+  `Rp ${Number(value || 0).toLocaleString('id-ID')}`;
+
+function productName(product) {
+  if (!product) return '-';
+
+  const base = product.base_name || product.name || 'Produk';
+
+  return product.variant_name
+    ? `${base} - ${product.variant_name}`
+    : base;
+}
+
 export default function POSScreen() {
-  const [products, setProducts] = useState([]);
   const [locations, setLocations] = useState([]);
-  const [selectedLocationId, setSelectedLocationId] = useState(null);
+  const [locationId, setLocationId] = useState(null);
+  const [products, setProducts] = useState([]);
+
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [quantity, setQuantity] = useState('1');
-  const [paymentAmount, setPaymentAmount] = useState('');
+  const [cart, setCart] = useState([]);
+
   const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentProof, setPaymentProof] = useState(null);
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const [paymentMethodVisible, setPaymentMethodVisible] = useState(false);
-  const [receiptVisible, setReceiptVisible] = useState(false);
+
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [paymentPickerOpen, setPaymentPickerOpen] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+
   const [lastSale, setLastSale] = useState(null);
-  const stockAlertKeyRef = useRef('');
+  const [loading, setLoading] = useState(false);
 
-  const selectedLocation = locations.find((item) => String(item.id) === String(selectedLocationId));
+  const selectedLocation = useMemo(
+    () =>
+      locations.find(
+        (item) => String(item.id) === String(locationId)
+      ),
+    [locations, locationId]
+  );
 
-  const loadLocations = async () => {
+  const total = useMemo(
+    () =>
+      cart.reduce(
+        (sum, item) => sum + item.price * item.quantity,
+        0
+      ),
+    [cart]
+  );
+
+  const totalItems = useMemo(
+    () =>
+      cart.reduce(
+        (sum, item) => sum + item.quantity,
+        0
+      ),
+    [cart]
+  );
+
+  const change = Math.max(
+    Number(paymentAmount || 0) - total,
+    0
+  );
+
+  const paymentLabel =
+    PAYMENT_METHODS.find(
+      (item) => item.value === paymentMethod
+    )?.label || 'Cash';
+
+  const loadLocations = useCallback(async () => {
     try {
       const response = await api.get('/products/locations');
-      const locationData = response.data.data || [];
-      setLocations(locationData);
-      if (!selectedLocationId && locationData.length > 0) {
-        setSelectedLocationId(locationData[0].id);
-      }
-    } catch (error) {
-      Alert.alert('Gagal', 'Tidak bisa memuat lokasi/cabang');
-    }
-  };
+      const data = response.data?.data || [];
 
-  const loadProducts = async () => {
+      setLocations(data);
+
+      setLocationId(
+        (current) => current || data[0]?.id || null
+      );
+    } catch (error) {
+      Alert.alert(
+        'Gagal',
+        error.response?.data?.message ||
+          'Tidak bisa memuat lokasi.'
+      );
+    }
+  }, []);
+
+  const loadProducts = useCallback(async () => {
+    if (!locationId) return;
+
     try {
       const response = await api.get('/products', {
-        params: selectedLocationId ? { location_id: selectedLocationId } : {},
-      });
-      const productData = response.data.data || [];
-      setProducts(productData);
-
-      const alertMessage = buildStockAlert(productData, selectedLocation?.name);
-      const alertKey = JSON.stringify({
-        locationId: selectedLocationId,
-        products: productData
-          .filter((item) => Number(item.stock || 0) <= Number(item.minimum_stock || 0))
-          .map((item) => [item.id, item.stock, item.minimum_stock]),
+        params: {
+          location_id: locationId,
+        },
       });
 
-      if (alertMessage && alertKey !== stockAlertKeyRef.current) {
-        stockAlertKeyRef.current = alertKey;
-        Alert.alert('Peringatan Stok', alertMessage);
-      }
+      const data = response.data?.data || [];
 
-      if (!selectedProduct && productData.length > 0) {
-        setSelectedProduct(productData[0]);
-      } else if (selectedProduct) {
-        const updated = productData.find((item) => item.id === selectedProduct.id);
-        if (updated) {
-          setSelectedProduct(updated);
-        } else {
-          setSelectedProduct(productData[0] || null);
-        }
-      }
+      setProducts(data);
+
+      setSelectedProduct((current) =>
+        current
+          ? data.find(
+              (item) =>
+                Number(item.id) === Number(current.id)
+            ) || null
+          : null
+      );
+
+      setCart((currentCart) =>
+        currentCart
+          .map((cartItem) => {
+            const currentProduct = data.find(
+              (item) =>
+                Number(item.id) ===
+                Number(cartItem.product_id)
+            );
+
+            if (!currentProduct) {
+              return null;
+            }
+
+            return {
+              ...cartItem,
+              name: productName(currentProduct),
+              price: Number(
+                currentProduct.sell_price || 0
+              ),
+              stock: Number(
+                currentProduct.stock || 0
+              ),
+              unit:
+                currentProduct.sell_unit || '-',
+            };
+          })
+          .filter(Boolean)
+      );
     } catch (error) {
-      Alert.alert('Gagal', 'Tidak bisa memuat daftar produk');
+      Alert.alert(
+        'Gagal',
+        error.response?.data?.message ||
+          'Tidak bisa memuat produk.'
+      );
     }
-  };
+  }, [locationId]);
 
   useEffect(() => {
     loadLocations();
-  }, []);
+  }, [loadLocations]);
 
   useFocusEffect(
     useCallback(() => {
-      if (selectedLocationId) {
-        loadProducts();
-      }
-    }, [selectedLocationId])
+      loadProducts();
+    }, [loadProducts])
   );
 
-  const total = useMemo(() => {
-    return Number(selectedProduct?.sell_price || 0) * Number(quantity || 0);
-  }, [selectedProduct, quantity]);
+  useEffect(() => {
+    if (paymentMethod !== 'cash') {
+      setPaymentAmount(
+        total > 0 ? String(total) : ''
+      );
+    }
+  }, [paymentMethod, total]);
 
-  const changeAmount = useMemo(() => {
-    if (paymentMethod !== 'cash') return 0;
-    return Number(paymentAmount || 0) - total;
-  }, [paymentAmount, total, paymentMethod]);
+  function applyLocation(nextLocationId) {
+    setLocationId(nextLocationId);
+    setSelectedProduct(null);
+    setQuantity('1');
+    setCart([]);
+    setPaymentAmount('');
+    setPaymentProof(null);
+  }
 
-  const selectedPaymentMethodLabel =
-    PAYMENT_METHOD_OPTIONS.find((item) => item.value === paymentMethod)?.label || 'Cash';
+  function selectLocation(nextLocationId) {
+    if (
+      String(nextLocationId) === String(locationId)
+    ) {
+      return;
+    }
 
-  const pickPaymentProof = async () => {
+    if (cart.length === 0) {
+      applyLocation(nextLocationId);
+      return;
+    }
+
+    Alert.alert(
+      'Ganti lokasi?',
+      'Keranjang akan dikosongkan karena stok setiap lokasi berbeda.',
+      [
+        {
+          text: 'Batal',
+          style: 'cancel',
+        },
+        {
+          text: 'Ganti',
+          style: 'destructive',
+          onPress: () =>
+            applyLocation(nextLocationId),
+        },
+      ]
+    );
+  }
+
+  function addToCart() {
+    const qty = Number(quantity);
+
+    if (!selectedProduct) {
+      Alert.alert(
+        'Validasi',
+        'Pilih produk terlebih dahulu.'
+      );
+      return;
+    }
+
+    if (
+      !Number.isInteger(qty) ||
+      qty <= 0
+    ) {
+      Alert.alert(
+        'Validasi',
+        'Jumlah harus berupa angka bulat lebih dari 0.'
+      );
+      return;
+    }
+
+    const stock = Number(
+      selectedProduct.stock || 0
+    );
+
+    const existing = cart.find(
+      (item) =>
+        Number(item.product_id) ===
+        Number(selectedProduct.id)
+    );
+
+    const nextQty =
+      Number(existing?.quantity || 0) + qty;
+
+    if (nextQty > stock) {
+      Alert.alert(
+        'Stok tidak cukup',
+        `Stok tersedia ${stock}. Saat ini di keranjang ${
+          existing?.quantity || 0
+        }.`
+      );
+      return;
+    }
+
+    setCart((currentCart) => {
+      const exists = currentCart.some(
+        (item) =>
+          Number(item.product_id) ===
+          Number(selectedProduct.id)
+      );
+
+      if (exists) {
+        return currentCart.map((item) =>
+          Number(item.product_id) ===
+          Number(selectedProduct.id)
+            ? {
+                ...item,
+                quantity: nextQty,
+              }
+            : item
+        );
+      }
+
+      return [
+        ...currentCart,
+        {
+          product_id: Number(
+            selectedProduct.id
+          ),
+          name: productName(selectedProduct),
+          price: Number(
+            selectedProduct.sell_price || 0
+          ),
+          quantity: qty,
+          stock,
+          unit:
+            selectedProduct.sell_unit || '-',
+        },
+      ];
+    });
+
+    setSelectedProduct(null);
+    setQuantity('1');
+  }
+
+  function changeCartQuantity(
+    productId,
+    difference
+  ) {
+    setCart((currentCart) =>
+      currentCart.flatMap((item) => {
+        if (
+          Number(item.product_id) !==
+          Number(productId)
+        ) {
+          return [item];
+        }
+
+        const nextQty =
+          item.quantity + difference;
+
+        if (nextQty <= 0) {
+          return [];
+        }
+
+        if (nextQty > item.stock) {
+          Alert.alert(
+            'Stok tidak cukup',
+            `Stok tersedia ${item.stock}.`
+          );
+
+          return [item];
+        }
+
+        return [
+          {
+            ...item,
+            quantity: nextQty,
+          },
+        ];
+      })
+    );
+  }
+
+  function removeItem(productId) {
+    setCart((currentCart) =>
+      currentCart.filter(
+        (item) =>
+          Number(item.product_id) !==
+          Number(productId)
+      )
+    );
+  }
+
+  function clearCart() {
+    Alert.alert(
+      'Kosongkan keranjang?',
+      'Semua produk akan dihapus.',
+      [
+        {
+          text: 'Batal',
+          style: 'cancel',
+        },
+        {
+          text: 'Kosongkan',
+          style: 'destructive',
+          onPress: () => {
+            setCart([]);
+            setPaymentAmount('');
+          },
+        },
+      ]
+    );
+  }
+
+  async function pickProof() {
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const permission =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
 
       if (permission.status !== 'granted') {
-        Alert.alert('Izin diperlukan', 'Izinkan akses galeri untuk memilih bukti pembayaran.');
+        Alert.alert(
+          'Izin diperlukan',
+          'Izinkan akses galeri untuk memilih bukti transfer.'
+        );
         return;
       }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: false,
-        quality: 0.5,
-        base64: true,
-      });
+      const result =
+        await ImagePicker.launchImageLibraryAsync({
+          mediaTypes:
+            ImagePicker.MediaTypeOptions.Images,
+          quality: 0.5,
+          base64: true,
+        });
 
-      if (result.canceled) return;
+      if (result.canceled) {
+        return;
+      }
 
       const asset = result.assets?.[0];
-      if (!asset) return;
 
-      const mimeType = asset.mimeType || 'image/jpeg';
+      if (!asset) {
+        return;
+      }
+
+      const mimeType =
+        asset.mimeType || 'image/jpeg';
+
       setPaymentProof({
-        uri: asset.uri,
-        name: asset.fileName || `bukti-pembayaran-${Date.now()}.jpg`,
-        data: asset.base64 ? `data:${mimeType};base64,${asset.base64}` : asset.uri,
+        name:
+          asset.fileName ||
+          `bukti-transfer-${Date.now()}.jpg`,
+        data: asset.base64
+          ? `data:${mimeType};base64,${asset.base64}`
+          : asset.uri,
       });
     } catch (error) {
-      Alert.alert('Gagal', 'Tidak bisa memilih bukti pembayaran');
+      Alert.alert(
+        'Gagal',
+        'Bukti pembayaran tidak dapat dipilih.'
+      );
     }
-  };
+  }
 
-  const checkout = async () => {
-    if (!selectedProduct?.id || Number(quantity) <= 0) {
-      Alert.alert('Validasi', 'Pilih produk dan isi qty yang valid');
+  function resetForm() {
+    setSelectedProduct(null);
+    setQuantity('1');
+    setCart([]);
+    setPaymentMethod('cash');
+    setPaymentAmount('');
+    setPaymentProof(null);
+  }
+
+  async function checkout() {
+    if (!locationId) {
+      Alert.alert(
+        'Validasi',
+        'Pilih lokasi transaksi.'
+      );
       return;
     }
 
-    if (Number(selectedProduct.stock || 0) < Number(quantity || 0)) {
-      Alert.alert('Validasi', 'Stok produk tidak mencukupi');
+    if (cart.length === 0) {
+      Alert.alert(
+        'Validasi',
+        'Keranjang masih kosong.'
+      );
       return;
     }
 
-    if (paymentMethod === 'cash' && Number(paymentAmount) < total) {
-      Alert.alert('Validasi', 'Nominal pembayaran kurang');
+    if (
+      Number(paymentAmount || 0) < total
+    ) {
+      Alert.alert(
+        'Validasi',
+        'Nominal pembayaran masih kurang.'
+      );
+      return;
+    }
+
+    const invalidItem = cart.find(
+      (cartItem) => {
+        const latest = products.find(
+          (item) =>
+            Number(item.id) ===
+            Number(cartItem.product_id)
+        );
+
+        return (
+          !latest ||
+          cartItem.quantity >
+            Number(latest.stock || 0)
+        );
+      }
+    );
+
+    if (invalidItem) {
+      Alert.alert(
+        'Stok berubah',
+        `Stok ${invalidItem.name} tidak lagi mencukupi. Sesuaikan keranjang.`
+      );
+
+      await loadProducts();
       return;
     }
 
     try {
-      const response = await api.post('/sales', {
-        payment_amount: paymentMethod === 'cash' ? Number(paymentAmount) : total,
-        payment_method: paymentMethod,
-        payment_proof_name: paymentProof?.name || null,
-        payment_proof_data: paymentProof?.data || null,
-        qris_auto_confirm: paymentMethod === 'qris',
-        location_id: Number(selectedLocationId),
-        items: [{ product_id: Number(selectedProduct.id), quantity: Number(quantity) }],
-      });
+      setLoading(true);
 
-      const sale = response.data.data;
+      const response = await api.post(
+        '/sales',
+        {
+          location_id: Number(locationId),
+
+          payment_amount: Number(
+            paymentAmount
+          ),
+
+          payment_method: paymentMethod,
+
+          payment_proof_name:
+            paymentProof?.name || null,
+
+          payment_proof_data:
+            paymentProof?.data || null,
+
+          qris_auto_confirm:
+            paymentMethod === 'qris',
+
+          items: cart.map((item) => ({
+            product_id: Number(
+              item.product_id
+            ),
+            quantity: Number(
+              item.quantity
+            ),
+          })),
+        }
+      );
+
+      const sale = response.data?.data;
+
+      setLastSale(sale);
+      setReceiptOpen(true);
+
+      resetForm();
 
       await loadProducts();
-      setQuantity('1');
-      setPaymentAmount('');
-      setPaymentMethod('cash');
-      setPaymentProof(null);
-      setLastSale(sale);
-      setReceiptVisible(true);
 
       Alert.alert(
         'Transaksi berhasil',
-        `Total: ${formatCurrency(sale.total_amount)}\nKembalian: ${formatCurrency(
-          sale.change_amount
-        )}\nStatus bayar: ${sale.payment_status || 'confirmed'}`
+        `Total: ${money(
+          sale?.total_amount
+        )}\nKembalian: ${money(
+          sale?.change_amount
+        )}`
       );
     } catch (error) {
       Alert.alert(
         'Transaksi gagal',
-        error.response?.data?.message || 'Terjadi kesalahan'
+        error.response?.data?.message ||
+          'Terjadi kesalahan pada server.'
       );
+    } finally {
+      setLoading(false);
     }
-  };
+  }
 
   return (
     <ScreenContainer>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Transaksi Penjualan</Text>
+      <Text style={styles.title}>
+        Transaksi Penjualan
+      </Text>
 
-        <View style={styles.card}>
-          <Text style={styles.label}>Location / Cabang</Text>
-          <View style={styles.locationButtonRow}>
-            {locations.map((location) => (
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>
+          1. Pilih Lokasi dan Produk
+        </Text>
+
+        <Text style={styles.label}>
+          Lokasi / Cabang
+        </Text>
+
+        <View style={styles.wrapRow}>
+          {locations.map((location) => {
+            const active =
+              String(location.id) ===
+              String(locationId);
+
+            return (
               <TouchableOpacity
                 key={location.id}
                 style={[
                   styles.locationButton,
-                  String(selectedLocationId) === String(location.id) && styles.locationButtonActive,
+                  active &&
+                    styles.locationButtonActive,
                 ]}
-                onPress={() => setSelectedLocationId(location.id)}
+                onPress={() =>
+                  selectLocation(location.id)
+                }
               >
                 <Text
                   style={[
                     styles.locationButtonText,
-                    String(selectedLocationId) === String(location.id) && styles.locationButtonTextActive,
+                    active &&
+                      styles.locationButtonTextActive,
                   ]}
                 >
                   {location.name}
                 </Text>
               </TouchableOpacity>
-            ))}
-          </View>
+            );
+          })}
+        </View>
 
-          <Text>Lokasi transaksi: {selectedLocation?.name || '-'}</Text>
+        <Text style={styles.label}>
+          Produk
+        </Text>
 
-          <Text style={styles.label}>Pilih Produk</Text>
+        <TouchableOpacity
+          style={styles.selector}
+          onPress={() =>
+            setProductPickerOpen(true)
+          }
+        >
+          <Text style={styles.selectorText}>
+            {selectedProduct
+              ? productName(selectedProduct)
+              : 'Pilih produk'}
+          </Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.selectorButton}
-            onPress={() => setPickerVisible(true)}
-          >
-            <Text style={styles.selectorText}>
-              {selectedProduct ? formatProductName(selectedProduct) : 'Pilih produk'}
+        {selectedProduct ? (
+          <View style={styles.infoBox}>
+            <Text>
+              Stok:{' '}
+              {selectedProduct.stock || 0}
             </Text>
-          </TouchableOpacity>
 
-          <Text>Stok tersedia: {selectedProduct?.stock ?? 0}</Text>
-          <Text>Harga jual: {formatCurrency(selectedProduct?.sell_price)}</Text>
-          <Text>Satuan jual: {selectedProduct?.sell_unit || '-'}</Text>
+            <Text>
+              Harga:{' '}
+              {money(
+                selectedProduct.sell_price
+              )}{' '}
+              /{' '}
+              {selectedProduct.sell_unit ||
+                '-'}
+            </Text>
+          </View>
+        ) : null}
 
+        <View style={styles.row}>
           <TextInput
-            style={styles.input}
+            style={[
+              styles.input,
+              styles.quantityInput,
+            ]}
             value={quantity}
             onChangeText={setQuantity}
-            keyboardType="numeric"
+            keyboardType="number-pad"
             placeholder="Qty"
-            placeholderTextColor="#6b7280"
           />
 
-          <Text style={styles.label}>Metode Bayar</Text>
-
           <TouchableOpacity
-            style={styles.selectorButton}
-            onPress={() => setPaymentMethodVisible(true)}
+            style={styles.primaryButton}
+            onPress={addToCart}
           >
-            <Text style={styles.selectorText}>{selectedPaymentMethodLabel}</Text>
+            <Text style={styles.buttonText}>
+              Tambah ke Keranjang
+            </Text>
           </TouchableOpacity>
-
-          {paymentMethod === 'manual_transfer' && (
-            <View style={styles.paymentProofBox}>
-              <Text style={styles.label}>Bukti Pembayaran Manual</Text>
-              <Text style={styles.helperText}>
-                Upload foto bukti pembayaran bersifat opsional.
-              </Text>
-              <Text style={styles.helperText}>
-                Nominal transfer: {formatCurrency(total)}
-              </Text>
-              <TouchableOpacity style={styles.secondaryButton} onPress={pickPaymentProof}>
-                <Text style={styles.secondaryButtonText}>
-                  {paymentProof ? 'Ganti Bukti Pembayaran' : 'Upload Bukti Pembayaran'}
-                </Text>
-              </TouchableOpacity>
-              {paymentProof && (
-                <Text style={styles.proofText}>Terpilih: {paymentProof.name}</Text>
-              )}
-            </View>
-          )}
-
-          {paymentMethod === 'qris' && (
-            <View style={styles.qrisBox}>
-              <Text style={styles.label}>QRIS Otomatis</Text>
-              <Text style={styles.helperText}>
-                Pembayaran QRIS dikonfirmasi otomatis oleh sistem sebagai simulasi pembayaran.
-              </Text>
-              <Text style={styles.helperText}>
-                Nominal QRIS: {formatCurrency(total)}
-              </Text>
-            </View>
-          )}
-
-          {paymentMethod === 'cash' && (
-            <>
-              <TextInput
-                style={styles.input}
-                value={paymentAmount}
-                onChangeText={setPaymentAmount}
-                keyboardType="numeric"
-                placeholder="Nominal pembayaran"
-                placeholderTextColor="#6b7280"
-              />
-
-              <Text>
-                Kembalian:{' '}
-                {changeAmount >= 0 ? formatCurrency(changeAmount) : formatCurrency(0)}
-              </Text>
-            </>
-          )}
-
-          <Text>Total: {formatCurrency(total)}</Text>
-
-          <Button title="Selesaikan Transaksi" onPress={checkout} />
         </View>
-      </ScrollView>
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.betweenRow}>
+          <View>
+            <Text style={styles.sectionTitle}>
+              2. Keranjang
+            </Text>
+
+            <Text style={styles.helper}>
+              {cart.length} jenis •{' '}
+              {totalItems} item
+            </Text>
+          </View>
+
+          {cart.length > 0 ? (
+            <TouchableOpacity
+              onPress={clearCart}
+            >
+              <Text style={styles.danger}>
+                Kosongkan
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {cart.length === 0 ? (
+          <View style={styles.emptyBox}>
+            <Text style={styles.emptyTitle}>
+              Keranjang masih kosong
+            </Text>
+
+            <Text style={styles.helper}>
+              Pilih produk lalu tambahkan ke
+              keranjang.
+            </Text>
+          </View>
+        ) : (
+          cart.map((item) => (
+            <View
+              key={item.product_id}
+              style={styles.cartItem}
+            >
+              <View
+                style={styles.betweenRow}
+              >
+                <View style={styles.flexOne}>
+                  <Text
+                    style={styles.itemName}
+                  >
+                    {item.name}
+                  </Text>
+
+                  <Text style={styles.helper}>
+                    {money(item.price)} /{' '}
+                    {item.unit}
+                  </Text>
+
+                  <Text style={styles.helper}>
+                    Stok: {item.stock}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() =>
+                    removeItem(
+                      item.product_id
+                    )
+                  }
+                >
+                  <Text
+                    style={styles.danger}
+                  >
+                    Hapus
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View
+                style={styles.betweenRow}
+              >
+                <View
+                  style={
+                    styles.quantityControl
+                  }
+                >
+                  <TouchableOpacity
+                    style={
+                      styles.quantityButton
+                    }
+                    onPress={() =>
+                      changeCartQuantity(
+                        item.product_id,
+                        -1
+                      )
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.quantityButtonText
+                      }
+                    >
+                      −
+                    </Text>
+                  </TouchableOpacity>
+
+                  <Text
+                    style={
+                      styles.quantityValue
+                    }
+                  >
+                    {item.quantity}
+                  </Text>
+
+                  <TouchableOpacity
+                    style={
+                      styles.quantityButton
+                    }
+                    onPress={() =>
+                      changeCartQuantity(
+                        item.product_id,
+                        1
+                      )
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.quantityButtonText
+                      }
+                    >
+                      +
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={styles.subtotal}>
+                  {money(
+                    item.price *
+                      item.quantity
+                  )}
+                </Text>
+              </View>
+            </View>
+          ))
+        )}
+
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>
+            Total
+          </Text>
+
+          <Text style={styles.totalValue}>
+            {money(total)}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.sectionTitle}>
+          3. Pembayaran
+        </Text>
+
+        <Text style={styles.label}>
+          Metode Pembayaran
+        </Text>
+
+        <TouchableOpacity
+          style={styles.selector}
+          onPress={() =>
+            setPaymentPickerOpen(true)
+          }
+        >
+          <Text style={styles.selectorText}>
+            {paymentLabel}
+          </Text>
+        </TouchableOpacity>
+
+        {paymentMethod ===
+        'manual_transfer' ? (
+          <View style={styles.infoBox}>
+            <Text style={styles.helper}>
+              Nominal mengikuti total
+              transaksi.
+            </Text>
+
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={pickProof}
+            >
+              <Text style={styles.buttonText}>
+                {paymentProof
+                  ? 'Ganti Bukti Transfer'
+                  : 'Pilih Bukti Transfer'}
+              </Text>
+            </TouchableOpacity>
+
+            {paymentProof ? (
+              <Text style={styles.proof}>
+                {paymentProof.name}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+
+        {paymentMethod === 'qris' ? (
+          <View style={styles.qrisBox}>
+            <Text style={styles.qrisTitle}>
+              QRIS Simulasi
+            </Text>
+
+            <Text style={styles.helper}>
+              Konfirmasi QRIS dilakukan
+              otomatis oleh prototype, bukan
+              payment gateway asli.
+            </Text>
+          </View>
+        ) : null}
+
+        <Text style={styles.label}>
+          Nominal Pembayaran
+        </Text>
+
+        <TextInput
+          style={[
+            styles.input,
+            paymentMethod !== 'cash' &&
+              styles.disabledInput,
+          ]}
+          value={paymentAmount}
+          onChangeText={setPaymentAmount}
+          keyboardType="number-pad"
+          editable={
+            paymentMethod === 'cash'
+          }
+          placeholder="Masukkan nominal pembayaran"
+        />
+
+        <View style={styles.summaryBox}>
+          <View style={styles.betweenRow}>
+            <Text>Total</Text>
+
+            <Text style={styles.bold}>
+              {money(total)}
+            </Text>
+          </View>
+
+          <View style={styles.betweenRow}>
+            <Text>Bayar</Text>
+
+            <Text style={styles.bold}>
+              {money(paymentAmount)}
+            </Text>
+          </View>
+
+          <View style={styles.betweenRow}>
+            <Text>Kembalian</Text>
+
+            <Text style={styles.bold}>
+              {money(change)}
+            </Text>
+          </View>
+        </View>
+
+        <TouchableOpacity
+          style={[
+            styles.checkoutButton,
+            (loading ||
+              cart.length === 0) &&
+              styles.disabledButton,
+          ]}
+          disabled={
+            loading || cart.length === 0
+          }
+          onPress={checkout}
+        >
+          <Text style={styles.buttonText}>
+            {loading
+              ? 'Memproses...'
+              : 'Selesaikan Transaksi'}
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       <ProductPickerModal
-        visible={pickerVisible}
+        visible={productPickerOpen}
         products={products}
-        title={`Pilih Produk Penjualan - ${selectedLocation?.name || 'Lokasi'}`}
+        title={`Pilih Produk - ${
+          selectedLocation?.name ||
+          'Lokasi'
+        }`}
         mode="sell"
-        onClose={() => setPickerVisible(false)}
-        onSelect={(item) => {
-          setSelectedProduct(item);
-          setPickerVisible(false);
+        onClose={() =>
+          setProductPickerOpen(false)
+        }
+        onSelect={(product) => {
+          setSelectedProduct(product);
+          setProductPickerOpen(false);
         }}
       />
 
-      <Modal visible={paymentMethodVisible} transparent animationType="fade">
+      <Modal
+        visible={paymentPickerOpen}
+        transparent
+        animationType="fade"
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Pilih Metode Bayar</Text>
+            <Text style={styles.modalTitle}>
+              Pilih Metode Pembayaran
+            </Text>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {PAYMENT_METHOD_OPTIONS.map((item) => (
-                <TouchableOpacity
-                  key={item.value}
-                  style={[
-                    styles.optionButton,
-                    paymentMethod === item.value && styles.optionButtonActive,
-                  ]}
-                  onPress={() => {
-                    setPaymentMethod(item.value);
-                    setPaymentMethodVisible(false);
-                    if (item.value !== 'cash') {
-                      setPaymentAmount('');
-                    }
-                    if (item.value !== 'manual_transfer') {
-                      setPaymentProof(null);
-                    }
-                  }}
-                >
-                  <Text
+            {PAYMENT_METHODS.map(
+              (method) => {
+                const active =
+                  method.value ===
+                  paymentMethod;
+
+                return (
+                  <TouchableOpacity
+                    key={method.value}
                     style={[
-                      styles.optionText,
-                      paymentMethod === item.value && styles.optionTextActive,
+                      styles.option,
+                      active &&
+                        styles.optionActive,
                     ]}
-                  >
-                    {item.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                    onPress={() => {
+                      setPaymentMethod(
+                        method.value
+                      );
 
-              <TouchableOpacity
-                style={styles.closeModalButton}
-                onPress={() => setPaymentMethodVisible(false)}
-              >
-                <Text style={styles.closeModalText}>Tutup</Text>
-              </TouchableOpacity>
-            </ScrollView>
+                      setPaymentPickerOpen(
+                        false
+                      );
+
+                      if (
+                        method.value !==
+                        'manual_transfer'
+                      ) {
+                        setPaymentProof(null);
+                      }
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.optionText,
+                        active &&
+                          styles.optionTextActive,
+                      ]}
+                    >
+                      {method.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }
+            )}
+
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() =>
+                setPaymentPickerOpen(false)
+              }
+            >
+              <Text style={styles.closeText}>
+                Tutup
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
-      <Modal visible={receiptVisible} transparent animationType="slide">
+      <Modal
+        visible={receiptOpen}
+        transparent
+        animationType="slide"
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.receiptCard}>
-            <Text style={styles.modalTitle}>Bukti Transaksi / Receipt</Text>
+            <Text style={styles.modalTitle}>
+              Bukti Transaksi
+            </Text>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={styles.receiptText}>Transaksi #{lastSale?.sale_id}</Text>
+            <ScrollView
+              showsVerticalScrollIndicator={
+                false
+              }
+            >
               <Text style={styles.receiptText}>
-                Lokasi: {lastSale?.location_name || selectedLocation?.name || '-'}
+                Transaksi #
+                {lastSale?.sale_id || '-'}
               </Text>
-              <Text style={styles.receiptText}>Metode: {lastSale?.payment_method}</Text>
-              <Text style={styles.receiptText}>Status: {lastSale?.payment_status}</Text>
+
+              <Text style={styles.receiptText}>
+                Lokasi:{' '}
+                {lastSale?.location_name ||
+                  '-'}
+              </Text>
+
+              <Text style={styles.receiptText}>
+                Metode:{' '}
+                {lastSale?.payment_method ||
+                  '-'}
+              </Text>
+
+              <Text style={styles.receiptText}>
+                Status:{' '}
+                {lastSale?.payment_status ||
+                  '-'}
+              </Text>
+
               {lastSale?.qris_reference ? (
-                <Text style={styles.receiptText}>Ref QRIS: {lastSale.qris_reference}</Text>
+                <Text
+                  style={styles.receiptText}
+                >
+                  Referensi QRIS:{' '}
+                  {lastSale.qris_reference}
+                </Text>
               ) : null}
-              {lastSale?.payment_proof_name ? (
-                <Text style={styles.receiptText}>Bukti manual: {lastSale.payment_proof_name}</Text>
-              ) : null}
 
-              <View style={styles.receiptDivider} />
+              <View style={styles.divider} />
 
-              {(lastSale?.items || []).map((item) => (
-                <View key={`${item.product_id}-${item.quantity}`} style={styles.receiptItem}>
-                  <Text style={styles.receiptText}>{item.product_name}</Text>
-                  <Text style={styles.receiptText}>
-                    {item.quantity} x {formatCurrency(item.price)} = {formatCurrency(item.total)}
-                  </Text>
-                </View>
-              ))}
+              {(lastSale?.items || []).map(
+                (item, index) => (
+                  <View
+                    key={`${item.product_id}-${index}`}
+                    style={styles.receiptItem}
+                  >
+                    <Text
+                      style={styles.itemName}
+                    >
+                      {item.product_name}
+                    </Text>
 
-              <View style={styles.receiptDivider} />
-              <Text style={styles.receiptTotal}>Total: {formatCurrency(lastSale?.total_amount)}</Text>
-              <Text style={styles.receiptText}>
-                Bayar: {formatCurrency(lastSale?.payment_amount)}
+                    <Text
+                      style={
+                        styles.receiptText
+                      }
+                    >
+                      {item.quantity} ×{' '}
+                      {money(item.price)} ={' '}
+                      {money(item.total)}
+                    </Text>
+                  </View>
+                )
+              )}
+
+              <View style={styles.divider} />
+
+              <Text
+                style={styles.receiptTotal}
+              >
+                Total:{' '}
+                {money(
+                  lastSale?.total_amount
+                )}
               </Text>
+
               <Text style={styles.receiptText}>
-                Kembali: {formatCurrency(lastSale?.change_amount)}
+                Bayar:{' '}
+                {money(
+                  lastSale?.payment_amount
+                )}
+              </Text>
+
+              <Text style={styles.receiptText}>
+                Kembalian:{' '}
+                {money(
+                  lastSale?.change_amount
+                )}
               </Text>
 
               <TouchableOpacity
-                style={styles.closeModalButton}
-                onPress={() => setReceiptVisible(false)}
+                style={styles.closeButton}
+                onPress={() =>
+                  setReceiptOpen(false)
+                }
               >
-                <Text style={styles.closeModalText}>Tutup Receipt</Text>
+                <Text style={styles.closeText}>
+                  Tutup
+                </Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -482,163 +1151,339 @@ export default function POSScreen() {
 const styles = StyleSheet.create({
   title: {
     fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 12,
+    fontWeight: '800',
+    color: '#111827',
   },
+
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#111827',
+  },
+
   card: {
     backgroundColor: '#fff',
-    padding: 16,
     borderRadius: 16,
-    gap: 8,
+    padding: 16,
+    gap: 10,
     elevation: 2,
-    marginBottom: 12,
   },
+
   label: {
     fontWeight: '700',
-    marginTop: 4,
+    color: '#374151',
   },
-  helperText: {
+
+  helper: {
     color: '#6b7280',
     fontSize: 12,
   },
-  locationButtonRow: {
+
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  wrapRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 8,
   },
+
+  betweenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+
+  flexOne: {
+    flex: 1,
+  },
+
+  bold: {
+    fontWeight: '800',
+  },
+
   locationButton: {
     backgroundColor: '#e5e7eb',
+    borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999,
   },
+
   locationButtonActive: {
     backgroundColor: '#2563eb',
   },
+
   locationButtonText: {
     color: '#374151',
     fontWeight: '700',
   },
+
   locationButtonTextActive: {
     color: '#fff',
   },
-  selectorButton: {
+
+  selector: {
     borderWidth: 1,
     borderColor: '#d1d5db',
     borderRadius: 10,
     padding: 12,
     backgroundColor: '#f9fafb',
   },
+
   selectorText: {
     color: '#111827',
     fontWeight: '600',
   },
+
+  infoBox: {
+    backgroundColor: '#f3f4f6',
+    borderRadius: 10,
+    padding: 12,
+    gap: 6,
+  },
+
   input: {
     borderWidth: 1,
     borderColor: '#d1d5db',
     borderRadius: 10,
     padding: 12,
-    color: '#111827',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#fff',
   },
-  paymentProofBox: {
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
-    backgroundColor: '#eff6ff',
-    borderRadius: 12,
-    gap: 6,
+
+  quantityInput: {
+    width: 82,
   },
-  qrisBox: {
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#bbf7d0',
-    backgroundColor: '#f0fdf4',
-    borderRadius: 12,
-    gap: 6,
+
+  disabledInput: {
+    backgroundColor: '#f3f4f6',
+    color: '#6b7280',
   },
-  secondaryButton: {
+
+  primaryButton: {
+    flex: 1,
     backgroundColor: '#2563eb',
-    paddingVertical: 10,
     borderRadius: 10,
+    paddingVertical: 13,
     alignItems: 'center',
   },
-  secondaryButtonText: {
+
+  secondaryButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+
+  buttonText: {
     color: '#fff',
+    fontWeight: '800',
+  },
+
+  danger: {
+    color: '#dc2626',
     fontWeight: '700',
   },
-  proofText: {
+
+  emptyBox: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+  },
+
+  emptyTitle: {
+    fontWeight: '700',
+    color: '#374151',
+    marginBottom: 4,
+  },
+
+  cartItem: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
+  },
+
+  itemName: {
+    fontWeight: '800',
+    color: '#111827',
+  },
+
+  quantityControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+
+  quantityButton: {
+    width: 38,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f3f4f6',
+  },
+
+  quantityButtonText: {
+    fontSize: 20,
+    fontWeight: '800',
+  },
+
+  quantityValue: {
+    minWidth: 42,
+    textAlign: 'center',
+    fontWeight: '800',
+  },
+
+  subtotal: {
+    fontWeight: '800',
+    color: '#111827',
+  },
+
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingTop: 12,
+  },
+
+  totalLabel: {
+    fontSize: 16,
+    fontWeight: '800',
+  },
+
+  totalValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#1d4ed8',
+  },
+
+  proof: {
     color: '#1d4ed8',
     fontWeight: '600',
     fontSize: 12,
   },
+
+  qrisBox: {
+    backgroundColor: '#f0fdf4',
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    borderRadius: 10,
+    padding: 12,
+    gap: 4,
+  },
+
+  qrisTitle: {
+    color: '#166534',
+    fontWeight: '800',
+  },
+
+  summaryBox: {
+    backgroundColor: '#f9fafb',
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+  },
+
+  checkoutButton: {
+    backgroundColor: '#16a34a',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+
+  disabledButton: {
+    backgroundColor: '#9ca3af',
+  },
+
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'center',
     padding: 20,
   },
+
   modalCard: {
     backgroundColor: '#fff',
     borderRadius: 16,
     padding: 16,
-    maxHeight: '70%',
   },
+
   receiptCard: {
     backgroundColor: '#fff',
     borderRadius: 16,
     padding: 16,
     maxHeight: '85%',
   },
+
   modalTitle: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '800',
     marginBottom: 12,
   },
-  optionButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+
+  option: {
     backgroundColor: '#f3f4f6',
+    borderRadius: 10,
+    padding: 12,
     marginBottom: 8,
   },
-  optionButtonActive: {
+
+  optionActive: {
     backgroundColor: '#2563eb',
   },
+
   optionText: {
     color: '#111827',
-    fontWeight: '600',
+    fontWeight: '700',
   },
+
   optionTextActive: {
     color: '#fff',
   },
-  closeModalButton: {
+
+  closeButton: {
     marginTop: 12,
     backgroundColor: '#e5e7eb',
-    paddingVertical: 12,
     borderRadius: 10,
+    paddingVertical: 12,
     alignItems: 'center',
   },
-  closeModalText: {
+
+  closeText: {
     color: '#111827',
-    fontWeight: '700',
+    fontWeight: '800',
   },
-  receiptDivider: {
+
+  divider: {
     height: 1,
     backgroundColor: '#e5e7eb',
     marginVertical: 10,
   },
+
   receiptItem: {
     marginBottom: 8,
   },
+
   receiptText: {
     color: '#111827',
     marginBottom: 3,
   },
+
   receiptTotal: {
-    fontWeight: '700',
     fontSize: 16,
+    fontWeight: '900',
     marginBottom: 4,
   },
-});""
+});
